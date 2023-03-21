@@ -215,11 +215,18 @@ struct Index final {
     int normal_index;
 };
 
+struct Crease final {
+    int   position_index_from;
+    int   position_index_to;
+    float sharpness;
+};
+
 struct Mesh final {
     Array<Index>    indices;             // Position/Texture/Normal indices
     Array<uint8_t>  num_face_vertices;   // Number of vertices per face: 3 (triangle), 4 (quad), ... , 255
     Array<int32_t>  material_ids;        // Material ID per face
     Array<uint32_t> smoothing_group_ids; // Smoothing group ID per face (group id 0 means off)
+    Array<Crease>   creases;
 };
 
 struct Lines final {
@@ -4365,6 +4372,7 @@ struct ShapeRecord final {
     struct Mesh final {
         size_t index_buffer_start{};
         size_t face_buffer_start{};
+        size_t crease_buffer_start{};
     };
     struct Lines final {
         size_t index_buffer_start{};
@@ -4477,6 +4485,9 @@ struct Chunk final {
             Buffer<unsigned char> buffer;
             size_t                count;
         } faces{};
+        struct Creases final {
+            Buffer<Crease> buffer;
+        } creases{};
     };
     struct Lines final {
         struct Indices final {
@@ -5673,6 +5684,53 @@ inline auto ParseFace(
     return make_pair(count, rapidobj_errc::Success);
 }
 
+inline rapidobj_errc ParseTag(std::string_view text, size_t position_count, Buffer<Crease>* creases)
+{
+    creases->ensure_enough_room_for(1);
+    TrimLeft(text);
+
+    if (StartsWith(text, "crease 2/1/0 ")) { // 2/1/0 remains a mystery, OSD igores it as well
+        text.remove_prefix(13);
+
+        auto value = 0;
+        {
+            auto [ptr, rc] = std::from_chars(text.data(), text.data() + text.size(), value);
+            if (rc != kSuccess) {
+                return rapidobj_errc::ParseError;
+            }
+            auto num_parsed = static_cast<size_t>(ptr - text.data());
+            text.remove_prefix(num_parsed + 1);
+
+            creases->push_back({ value, -1, -1.f });
+        }
+        {
+            auto [ptr, rc] = std::from_chars(text.data(), text.data() + text.size(), value);
+            if (rc != kSuccess) {
+                return rapidobj_errc::ParseError;
+            }
+            auto num_parsed = static_cast<size_t>(ptr - text.data());
+            text.remove_prefix(num_parsed + 1);
+
+            creases->back().position_index_to = value;
+        }
+        {
+            auto valuef    = float();
+            auto [ptr, rc] = fast_float::from_chars(text.data(), text.data() + text.size(), valuef);
+
+            if (std::isnan(valuef)) {
+                return rapidobj_errc::ParseError;
+            }
+
+            if (valuef >= 10.f) {
+                valuef = std::numeric_limits<float>::infinity();
+            }
+            creases->back().sharpness = std::max(0.f, valuef);
+        }
+    }
+
+    return rapidobj_errc::Success;
+}
+
 inline auto ParseTextureOption(std::string_view line, TextureOption* texture_option)
 {
     assert(texture_option);
@@ -6216,6 +6274,7 @@ struct ShapeInfo final {
     struct Mesh final {
         size_t index_array_size{};
         size_t faces_array_size{};
+        size_t creases_array_size{};
     };
     struct Line final {
         size_t index_array_size{};
@@ -6284,6 +6343,7 @@ inline Result Merge(const std::vector<Chunk>& chunks, std::shared_ptr<SharedCont
         shape_records.push_back({});
         shape_records.back().mesh.index_buffer_start    = chunks.back().mesh.indices.buffer.size();
         shape_records.back().mesh.face_buffer_start     = chunks.back().mesh.faces.buffer.size();
+        shape_records.back().mesh.crease_buffer_start   = chunks.back().mesh.creases.buffer.size();
         shape_records.back().lines.index_buffer_start   = chunks.back().lines.indices.buffer.size();
         shape_records.back().lines.segment_buffer_start = chunks.back().lines.segments.buffer.size();
         shape_records.back().points.index_buffer_start  = chunks.back().points.indices.buffer.size();
@@ -6372,30 +6432,35 @@ inline Result Merge(const std::vector<Chunk>& chunks, std::shared_ptr<SharedCont
         for (size_t j = shape.chunk_index; j <= next.chunk_index; ++j) {
             auto mesh_index_buffer_size    = chunks[j].mesh.indices.buffer.size();
             auto mesh_faces_buffer_size    = chunks[j].mesh.faces.buffer.size();
+            auto mesh_creases_buffer_size  = chunks[j].mesh.creases.buffer.size();
             auto lines_index_buffer_size   = chunks[j].lines.indices.buffer.size();
             auto lines_segment_buffer_size = chunks[j].lines.segments.buffer.size();
             auto points_index_buffer_size  = chunks[j].points.indices.buffer.size();
             if (shape.chunk_index == next.chunk_index) {
                 shape_info.mesh.index_array_size   = next.mesh.index_buffer_start - shape.mesh.index_buffer_start;
                 shape_info.mesh.faces_array_size   = next.mesh.face_buffer_start - shape.mesh.face_buffer_start;
+                shape_info.mesh.creases_array_size = next.mesh.crease_buffer_start - shape.mesh.crease_buffer_start;
                 shape_info.line.index_array_size   = next.lines.index_buffer_start - shape.lines.index_buffer_start;
                 shape_info.line.segment_array_size = next.lines.segment_buffer_start - shape.lines.segment_buffer_start;
                 shape_info.point.index_array_size  = next.points.index_buffer_start - shape.points.index_buffer_start;
             } else if (j == shape.chunk_index) {
                 shape_info.mesh.index_array_size   = mesh_index_buffer_size - shape.mesh.index_buffer_start;
                 shape_info.mesh.faces_array_size   = mesh_faces_buffer_size - shape.mesh.face_buffer_start;
+                shape_info.mesh.creases_array_size = mesh_creases_buffer_size - shape.mesh.crease_buffer_start;
                 shape_info.line.index_array_size   = lines_index_buffer_size - shape.lines.index_buffer_start;
                 shape_info.line.segment_array_size = lines_segment_buffer_size - shape.lines.segment_buffer_start;
                 shape_info.point.index_array_size  = points_index_buffer_size - shape.points.index_buffer_start;
             } else if (j == next.chunk_index) {
                 shape_info.mesh.index_array_size += next.mesh.index_buffer_start;
                 shape_info.mesh.faces_array_size += next.mesh.face_buffer_start;
+                shape_info.mesh.creases_array_size += next.mesh.crease_buffer_start;
                 shape_info.line.index_array_size += next.lines.index_buffer_start;
                 shape_info.line.segment_array_size += next.lines.segment_buffer_start;
                 shape_info.point.index_array_size += next.points.index_buffer_start;
             } else {
                 shape_info.mesh.index_array_size += mesh_index_buffer_size;
                 shape_info.mesh.faces_array_size += mesh_faces_buffer_size;
+                shape_info.mesh.creases_array_size += mesh_creases_buffer_size;
                 shape_info.line.index_array_size += lines_index_buffer_size;
                 shape_info.line.segment_array_size += lines_segment_buffer_size;
                 shape_info.point.index_array_size += points_index_buffer_size;
@@ -6410,6 +6475,7 @@ inline Result Merge(const std::vector<Chunk>& chunks, std::shared_ptr<SharedCont
 
         auto num_indices       = shape_info.mesh.index_array_size;
         auto num_faces         = shape_info.mesh.faces_array_size;
+        auto num_creases       = shape_info.mesh.creases_array_size;
         auto num_material_ids  = context->material.library ? num_faces : 0;
         auto num_smoothing_ids = num_faces;
 
@@ -6419,7 +6485,8 @@ inline Result Merge(const std::vector<Chunk>& chunks, std::shared_ptr<SharedCont
             Mesh{ Array<Index>(num_indices),
                   Array<uint8_t>(num_faces),
                   Array<int32_t>(num_material_ids),
-                  Array<uint32_t>(num_smoothing_ids) },
+                  Array<uint32_t>(num_smoothing_ids),
+                  Array<Crease>(num_creases) },
             Lines{ Array<Index>(shape_info.line.index_array_size), Array<int32_t>(shape_info.line.segment_array_size) },
             Points{ Array<Index>(shape_info.point.index_array_size) } });
 
@@ -6460,6 +6527,10 @@ inline Result Merge(const std::vector<Chunk>& chunks, std::shared_ptr<SharedCont
                     if (nface_size) {
                         tasks.push_back(CopyBytes(nface_dst, nface_src, nface_size));
                         nface_dst += nface_size;
+                    }
+                    if (crease_size) {
+                        tasks.push_back(CopyCreases(crease_dst, crease_src, crease_size));
+                        crease_dst += crease_size;
                     }
                 }
             }
@@ -6833,6 +6904,18 @@ inline rapidobj_errc ProcessLine(std::string_view line, Chunk* chunk, SharedCont
                 static_cast<OffsetFlags>(ApplyOffset::Position),
                 &chunk->points.indices.buffer,
                 &chunk->points.indices.flags);
+            if (rc != rapidobj_errc::Success) {
+                return rc;
+            }
+        }
+        break;
+    }
+    case 't': {
+        if (StartsWith(line, "t ") || StartsWith(line, "t\t")) {
+            line.remove_prefix(2);
+
+            auto rc = ParseTag(line, chunk->positions.count, &chunk->mesh.creases.buffer);
+
             if (rc != rapidobj_errc::Success) {
                 return rc;
             }
