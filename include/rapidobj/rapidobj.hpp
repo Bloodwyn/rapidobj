@@ -5689,7 +5689,7 @@ inline rapidobj_errc ParseTag(std::string_view text, size_t position_count, Buff
     creases->ensure_enough_room_for(1);
     TrimLeft(text);
 
-    if (StartsWith(text, "crease 2/1/0 ")) { // 2/1/0 remains a mystery, OSD igores it as well
+    if (StartsWith(text, "crease 2/1/0 ")) {
         text.remove_prefix(13);
 
         auto value = 0;
@@ -5700,7 +5700,11 @@ inline rapidobj_errc ParseTag(std::string_view text, size_t position_count, Buff
             }
             auto num_parsed = static_cast<size_t>(ptr - text.data());
             text.remove_prefix(num_parsed + 1);
-
+                        
+            if (value < 0) {
+                return rapidobj_errc::ParseError; // not (yet) supported
+            }
+            --value;
             creases->push_back({ value, -1, -1.f });
         }
         {
@@ -5711,6 +5715,10 @@ inline rapidobj_errc ParseTag(std::string_view text, size_t position_count, Buff
             auto num_parsed = static_cast<size_t>(ptr - text.data());
             text.remove_prefix(num_parsed + 1);
 
+            if (value < 0) {
+                return rapidobj_errc::ParseError; // not (yet) supported
+            }
+            --value;
             creases->back().position_index_to = value;
         }
         {
