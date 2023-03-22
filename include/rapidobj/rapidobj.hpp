@@ -4595,14 +4595,22 @@ struct CopyIndices;
 using CopyBytes  = CopyElements<uint8_t>;
 using CopyInts   = CopyElements<int32_t>;
 using CopyFloats = CopyElements<float>;
+using CopyCreases = CopyElements<Crease>;
 
 using FillFloats = FillElements<float>;
 
 using FillMaterialIds       = FillIds<int32_t>;
 using FillSmoothingGroupIds = FillIds<uint32_t>;
 
-using MergeTask =
-    std::variant<CopyBytes, CopyInts, CopyFloats, CopyIndices, FillFloats, FillMaterialIds, FillSmoothingGroupIds>;
+using MergeTask = std::variant<
+    CopyBytes,
+    CopyInts,
+    CopyFloats,
+    CopyIndices,
+    CopyCreases,
+    FillFloats,
+    FillMaterialIds,
+    FillSmoothingGroupIds>;
 using MergeTasks = std::vector<MergeTask>;
 
 template <typename T>
@@ -5700,11 +5708,10 @@ inline rapidobj_errc ParseTag(std::string_view text, size_t position_count, Buff
             }
             auto num_parsed = static_cast<size_t>(ptr - text.data());
             text.remove_prefix(num_parsed + 1);
-                        
+
             if (value < 0) {
-                return rapidobj_errc::ParseError; // not (yet) supported
+                return rapidobj_errc::ParseError; // not (yet) supported, but opensubdiv counts differently anyway (starting at 0...)
             }
-            --value;
             creases->push_back({ value, -1, -1.f });
         }
         {
@@ -5718,7 +5725,6 @@ inline rapidobj_errc ParseTag(std::string_view text, size_t position_count, Buff
             if (value < 0) {
                 return rapidobj_errc::ParseError; // not (yet) supported
             }
-            --value;
             creases->back().position_index_to = value;
         }
         {
@@ -6504,28 +6510,37 @@ inline Result Merge(const std::vector<Chunk>& chunks, std::shared_ptr<SharedCont
             {
                 auto index_dst = shapes.back().mesh.indices.begin();
                 auto nface_dst = shapes.back().mesh.num_face_vertices.begin();
+                auto crease_dst = shapes.back().mesh.creases.begin();
 
                 for (size_t j = shape.chunk_index; j <= next.chunk_index; ++j) {
-                    auto index_src   = chunks[j].mesh.indices.buffer.data();
-                    auto index_flags = chunks[j].mesh.indices.flags.data();
-                    auto index_size  = chunks[j].mesh.indices.buffer.size();
-                    auto nface_src   = chunks[j].mesh.faces.buffer.data();
-                    auto nface_size  = chunks[j].mesh.faces.buffer.size();
+                    auto index_src    = chunks[j].mesh.indices.buffer.data();
+                    auto index_flags  = chunks[j].mesh.indices.flags.data();
+                    auto index_size   = chunks[j].mesh.indices.buffer.size();
+                    auto nface_src    = chunks[j].mesh.faces.buffer.data();
+                    auto nface_size   = chunks[j].mesh.faces.buffer.size();
+                    auto crease_src   = chunks[j].mesh.creases.buffer.data();
+                    auto crease_size  = chunks[j].mesh.creases.buffer.size();
+
                     if (shape.chunk_index == next.chunk_index) {
-                        index_src   = index_src + shape.mesh.index_buffer_start;
-                        index_flags = index_flags + shape.mesh.index_buffer_start;
-                        index_size  = next.mesh.index_buffer_start - shape.mesh.index_buffer_start;
-                        nface_src   = nface_src + shape.mesh.face_buffer_start;
-                        nface_size  = next.mesh.face_buffer_start - shape.mesh.face_buffer_start;
+                        index_src    = index_src + shape.mesh.index_buffer_start;
+                        index_flags  = index_flags + shape.mesh.index_buffer_start;
+                        index_size   = next.mesh.index_buffer_start - shape.mesh.index_buffer_start;
+                        nface_src    = nface_src + shape.mesh.face_buffer_start;
+                        nface_size   = next.mesh.face_buffer_start - shape.mesh.face_buffer_start;
+                        crease_src   = crease_src + shape.mesh.crease_buffer_start;
+                        crease_size  = next.mesh.crease_buffer_start - shape.mesh.crease_buffer_start;
                     } else if (j == shape.chunk_index) {
-                        index_src   = index_src + shape.mesh.index_buffer_start;
-                        index_flags = index_flags + shape.mesh.index_buffer_start;
-                        index_size  = index_size - shape.mesh.index_buffer_start;
-                        nface_src   = nface_src + shape.mesh.face_buffer_start;
-                        nface_size  = nface_size - shape.mesh.face_buffer_start;
+                        index_src    = index_src + shape.mesh.index_buffer_start;
+                        index_flags  = index_flags + shape.mesh.index_buffer_start;
+                        index_size   = index_size - shape.mesh.index_buffer_start;
+                        nface_src    = nface_src + shape.mesh.face_buffer_start;
+                        nface_size   = nface_size - shape.mesh.face_buffer_start;
+                        crease_src   = crease_src + shape.mesh.crease_buffer_start;
+                        crease_size  = crease_size - shape.mesh.crease_buffer_start;
                     } else if (j == next.chunk_index) {
                         index_size = next.mesh.index_buffer_start;
                         nface_size = next.mesh.face_buffer_start;
+                        crease_size = next.mesh.crease_buffer_start;
                     }
                     if (index_size) {
                         auto offset = AttributeInfo{ offsets[j].position, offsets[j].texcoord, offsets[j].normal };
