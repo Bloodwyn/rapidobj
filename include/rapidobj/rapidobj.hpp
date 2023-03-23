@@ -5701,6 +5701,7 @@ inline rapidobj_errc ParseTag(std::string_view text, size_t position_count, Buff
         text.remove_prefix(13);
 
         auto value = 0;
+        TrimLeft(text);
         {
             auto [ptr, rc] = std::from_chars(text.data(), text.data() + text.size(), value);
             if (rc != kSuccess) {
@@ -5714,6 +5715,7 @@ inline rapidobj_errc ParseTag(std::string_view text, size_t position_count, Buff
             }
             creases->push_back({ value, -1, -1.f });
         }
+        TrimLeft(text);
         {
             auto [ptr, rc] = std::from_chars(text.data(), text.data() + text.size(), value);
             if (rc != kSuccess) {
@@ -5727,6 +5729,7 @@ inline rapidobj_errc ParseTag(std::string_view text, size_t position_count, Buff
             }
             creases->back().position_index_to = value;
         }
+        TrimLeft(text);
         {
             auto valuef    = float();
             auto [ptr, rc] = fast_float::from_chars(text.data(), text.data() + text.size(), valuef);
